@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CoC Tracker - Auto Connect</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: system-ui, sans-serif;
+            background: linear-gradient(135deg, #0a0f1a, #0f172a);
+            color: white;
+            padding: 20px;
+        }
+        .container { max-width: 1200px; margin: 0 auto; }
+        .status-bar {
+            background: rgba(30,41,59,0.6);
+            border-radius: 20px;
+            padding: 12px 20px;
+            display: flex;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
+        }
+        .online { color: #4ade80; }
+        .offline { color: #f87171; }
+        .card {
+            background: rgba(30,41,59,0.5);
+            border-radius: 24px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .search-box {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        input {
+            flex: 1;
+            padding: 12px;
+            border-radius: 40px;
+            border: none;
+            background: #1e293b;
+            color: white;
+        }
+        button {
+            background: #f59e0b;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 40px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        .result-box {
+            background: #0f172a;
+            border-radius: 16px;
+            padding: 16px;
+            margin-top: 16px;
+        }
+        .error { color: #f87171; background: rgba(220,38,38,0.2); padding: 12px; border-radius: 12px; }
+        .loading { text-align: center; padding: 40px; color: #94a3b8; }
+        .backend-info {
+            font-size: 11px;
+            color: #64748b;
+            margin-top: 8px;
+            text-align: right;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1 style="text-align:center;">🏰 CoC Tracker</h1>
+    <p style="text-align:center; color:#94a3b8;">Auto Connect | Tanpa Setting</p>
+    
+    <div class="status-bar">
+        <div>📡 Backend: <span id="backendStatus" class="offline">Mencari...</span></div>
+        <div>🔑 Token: <span id="tokenStatus">-</span></div>
+    </div>
+    
+    <div class="card">
+        <div class="search-box">
+            <input type="text" id="clanTag" placeholder="Tag Klan (#2RGPJ8ROV)" value="#2RGPJ8ROV">
+            <button onclick="loadClan()">Cari Clan</button>
+        </div>
+        <div id="clanResult" class="result-box">🔍 Masukkan tag klan</div>
+    </div>
+</div>
+
+<script>
+let API_URL = null;
+let currentBackend = null;
+
+// ==================== AUTO DISCOVER BACKEND ====================
+async function discoverBackend() {
+    const statusSpan = document.getElementById('backendStatus');
+    const tokenSpan = document.getElementById('tokenStatus');
+    statusSpan.innerHTML = '<span class="offline">● Scanning...</span>';
+    
+    try {
+        // Ambil daftar backend dari Vercel
+        const res = await fetch('/api/backends');
+        const backends = await res.json();
+        
+        if (backends && backends.length) {
+            // Test semua backend yang terdaftar
+            for (const backend of backends) {
+                const isOnline = await testBackend(backend.url);
+                if (isOnline) {
+                    API_URL = backend.url;
+                    currentBackend = backend;
+                    statusSpan.innerHTML = '<span class="online">● Online</span>';
+                    tokenSpan.innerHTML = backend.token_status ? '✅ Ada' : '❌ Token tidak ada';
+                    console.log(`✅ Connected to: ${API_URL}`);
+                    return true;
+                }
+            }
+        }
+        
+        // Fallback ke default (ubah sesuai IP/domain backend default kamu)
+        const defaultBackends = [
+            localStorage.getItem('saved_backend') || null,
+            'http://localhost:2868'
+        ].filter(Boolean);
+        
+        for (const url of defaultBackends) {
+            const isOnline = await testBackend(url);
+            if (isOnline) {
+                API_URL = url;
+                statusSpan.innerHTML = '<span class="online">● Online</span>';
+                tokenSpan.innerHTML = '✅ Terhubung (local)';
+                return true;
+            }
+        }
+        
+        statusSpan.innerHTML = '<span class="offline">● No backend found</span>';
+        tokenSpan.innerHTML = '❌ -';
+        return false;
+    } catch (err) {
+        statusSpan.innerHTML = '<span class="offline">● Error</span>';
+        return false;
+    }
+}
+
+async function testBackend(url) {
+    try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3000);
+        const res = await fetch(`${url}/api/status`, { signal: controller.signal });
+        clearTimeout(timeoutId);
+        const data = await res.json();
+        return data.online === true || data.token !== undefined;
+    } catch {
+        return false;
+    }
+}
+
+// ==================== LOAD CLAN ====================
+async function loadClan() {
+    if (!API_URL) {
+        const connected = await discoverBackend();
+        if (!connected) {
+            document.getElementById('clanResult').innerHTML = '<div class="error">❌ Tidak ada backend yang tersedia. Pastikan backend sudah jalan.</div>';
+            return;
+        }
+    }
+    
+    let tag = document.getElementById('clanTag').value.trim();
+    if (!tag) return;
+    if (!tag.startsWith('#')) tag = '#' + tag;
+    
+    const div = document.getElementById('clanResult');
+    div.innerHTML = '<div class="loading">⏳ Loading...</div>';
+    
+    try {
+        const res = await fetch(`${API_URL}/api/clan?tag=${encodeURIComponent(tag)}`);
+        const data = await res.json();
+        if (data.error) throw new Error(data.reason || 'Gagal');
+        
+        div.innerHTML = `
+            <div class="result-box">
+                <strong>📛 ${data.name}</strong> (${data.tag})<br>
+                🏆 Level ${data.clanLevel} | 👥 ${data.members}/50<br>
+                🏅 Trofi ${data.clanPoints?.toLocaleString()} | 🔥 Win Streak ${data.warWinStreak}<br>
+                📍 ${data.location?.name || '-'} | 🔒 ${data.type}
+            </div>
+            <div class="backend-info">🔗 Backend: ${API_URL}</div>
+        `;
+    } catch (err) {
+        div.innerHTML = `<div class="error">❌ ${err.message}</div>`;
+        // Coba reconnect
+        API_URL = null;
+    }
+}
+
+// ==================== INIT ====================
+discoverBackend();
+setInterval(discoverBackend, 30000); // cek tiap 30 detik
+</script>
+</body>
+</html>
